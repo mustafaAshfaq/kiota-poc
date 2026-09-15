@@ -2,8 +2,8 @@
 
 ### Issue tracker
 
-Issues and PRDs are tracked in GitHub Issues for `mustafaashfaq/kiota-poc`. See `docs/agents/issue-tracker.md`.
+GitHub Issues for `mustafaAshfaq/kiota-poc`. See `docs/agents/issue-tracker.md`.
 
 ### Domain docs
 
-This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.
+Single-context layout. See `docs/agents/domain.md`.
