@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "catalog-api.Tests", "catalo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "orders-api.Tests", "orders-api\tests\orders-api.Tests.csproj", "{1663ECCD-8D23-4D89-ABEC-629B34379106}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "storefront-api.Tests", "storefront-api\tests\storefront-api.Tests.csproj", "{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,18 @@ Global
 		{1663ECCD-8D23-4D89-ABEC-629B34379106}.Release|x64.Build.0 = Release|Any CPU
 		{1663ECCD-8D23-4D89-ABEC-629B34379106}.Release|x86.ActiveCfg = Release|Any CPU
 		{1663ECCD-8D23-4D89-ABEC-629B34379106}.Release|x86.Build.0 = Release|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Debug|x64.Build.0 = Debug|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Debug|x86.Build.0 = Debug|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Release|Any CPU.Build.0 = Release|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Release|x64.ActiveCfg = Release|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Release|x64.Build.0 = Release|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Release|x86.ActiveCfg = Release|Any CPU
+		{17EAAD26-16C0-46AE-8FC1-0115BA18DD58}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
