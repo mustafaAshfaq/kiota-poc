@@ -43,7 +43,7 @@ jobs:
       - name: Checkout current main
         # Always the current tip of main, not the triggering commit: a regen PR
         # built on a stale tree would re-open resolved drift.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -89,7 +89,7 @@ jobs:
 
       - name: Set up .NET
         if: steps.changed.outputs.paths != ''
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
