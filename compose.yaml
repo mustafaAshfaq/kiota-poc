@@ -1,0 +1,59 @@
+# Local mesh mirroring the OpenShift topology.
+#
+# Only the Storefront is reachable from the host (like a Route + ClusterIP).
+# Catalog and Orders are producers with no host-published ports (like bare
+# ClusterIP services) — reachable only from inside the compose network by
+# their service DNS name (catalog-api / orders-api).
+#
+# Bring it up from the repo root:
+#   podman compose up --build
+#   (docker compose up --build also works)
+
+services:
+  catalog-api:
+    build:
+      context: ./catalog-api
+      dockerfile: Dockerfile
+    # No published ports: mesh-internal only, like a ClusterIP service.
+    # Uncomment for local debugging from the host (maps host 8081 -> 8080):
+    # ports:
+    #   - "8081:8080"
+    expose:
+      - "8080"
+    networks:
+      - mesh
+
+  orders-api:
+    build:
+      context: ./orders-api
+      dockerfile: Dockerfile
+    # No published ports: mesh-internal only, like a ClusterIP service.
+    # Uncomment for local debugging from the host (maps host 8082 -> 8080):
+    # ports:
+    #   - "8082:8080"
+    expose:
+      - "8080"
+    networks:
+      - mesh
+
+  storefront-api:
+    build:
+      context: ./storefront-api
+      dockerfile: Dockerfile
+    # The only service published to the host (like a Route on the Storefront).
+    ports:
+      - "8080:8080"
+    environment:
+      # Kiota clients target the producers by their in-network DNS names.
+      # Service names above must match these hosts.
+      Catalog__BaseUrl: "http://catalog-api:8080"
+      Orders__BaseUrl: "http://orders-api:8080"
+    depends_on:
+      - catalog-api
+      - orders-api
+    networks:
+      - mesh
+
+networks:
+  mesh:
+    driver: bridge
