@@ -1,0 +1,79 @@
+# Orders API — producer. ClusterIP only: deliberately NO Route, so it is
+# reachable only from inside the namespace at http://orders-api:8080.
+#
+# Before applying, substitute the {username}-dev placeholder in the image
+# reference with your Developer Sandbox namespace (see openshift/README.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-api
+  labels:
+    app: orders-api
+    app.kubernetes.io/name: orders-api
+    app.kubernetes.io/part-of: kiota-contract-first-poc
+    app.kubernetes.io/component: producer
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: orders-api
+  template:
+    metadata:
+      labels:
+        app: orders-api
+        app.kubernetes.io/name: orders-api
+        app.kubernetes.io/part-of: kiota-contract-first-poc
+    spec:
+      containers:
+        - name: orders-api
+          # Fully qualified in-cluster registry reference. A short name such as
+          # `orders-api:latest` would resolve against Docker Hub.
+          image: image-registry.openshift-image-registry.svc:5000/{username}-dev/orders-api:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+          # No startupProbe: these apps start well inside the liveness delay.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-api
+  labels:
+    app: orders-api
+    app.kubernetes.io/name: orders-api
+    app.kubernetes.io/part-of: kiota-contract-first-poc
+spec:
+  type: ClusterIP
+  selector:
+    app: orders-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

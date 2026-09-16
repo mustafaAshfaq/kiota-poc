@@ -1,0 +1,123 @@
+# Storefront API — the only publicly routable component (Deployment +
+# ClusterIP Service + Route). It consumes Catalog and Orders through the
+# Kiota-generated clients over in-cluster service DNS.
+#
+# Before applying, substitute the {username}-dev placeholder in the image
+# reference with your Developer Sandbox namespace (see openshift/README.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront-api
+  labels:
+    app: storefront-api
+    app.kubernetes.io/name: storefront-api
+    app.kubernetes.io/part-of: kiota-contract-first-poc
+    app.kubernetes.io/component: consumer
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: storefront-api
+  template:
+    metadata:
+      labels:
+        app: storefront-api
+        app.kubernetes.io/name: storefront-api
+        app.kubernetes.io/part-of: kiota-contract-first-poc
+    spec:
+      containers:
+        - name: storefront-api
+          # Fully qualified in-cluster registry reference. A short name such as
+          # `storefront-api:latest` would resolve against Docker Hub.
+          image: image-registry.openshift-image-registry.svc:5000/{username}-dev/storefront-api:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # Declared first: $(POD_NAMESPACE) below only expands against env
+            # vars defined earlier in this list.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Same configuration keys as compose.yaml. The committed OpenAPI
+            # documents carry no `servers` entry, so the Kiota clients get their
+            # base address here. These point at the sibling ClusterIP Services
+            # by their in-cluster DNS names, so no extra placeholder has to be
+            # substituted when the namespace changes.
+            - name: Catalog__BaseUrl
+              value: http://catalog-api.$(POD_NAMESPACE).svc.cluster.local:8080
+            - name: Orders__BaseUrl
+              value: http://orders-api.$(POD_NAMESPACE).svc.cluster.local:8080
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+          # No startupProbe: these apps start well inside the liveness delay.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront-api
+  labels:
+    app: storefront-api
+    app.kubernetes.io/name: storefront-api
+    app.kubernetes.io/part-of: kiota-contract-first-poc
+spec:
+  type: ClusterIP
+  selector:
+    app: storefront-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+# The one and only Route in this folder. Catalog and Orders stay unreachable
+# from outside the namespace — adding a Route for them would break the
+# "Storefront is the public surface" rule this POC demonstrates.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: storefront-api
+  labels:
+    app: storefront-api
+    app.kubernetes.io/name: storefront-api
+    app.kubernetes.io/part-of: kiota-contract-first-poc
+spec:
+  # No `host`: the cluster generates one so the manifest stays portable across
+  # sandbox namespaces. Read it back with
+  #   oc get route storefront-api -o jsonpath='{.spec.host}'
+  to:
+    kind: Service
+    name: storefront-api
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    # Router-terminated TLS; the hop to the pod is plain HTTP on 8080, which is
+    # all the container speaks.
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
