@@ -11,3 +11,8 @@ obj/
 *.user
 *.suo
 .vs/
+
+# Kiota writes a generation log beside the generated client; it is a run
+# artifact, not part of the contract output, and must not show up as drift
+# in the contract-regen workflow.
+.kiota.log

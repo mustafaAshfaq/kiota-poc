@@ -1,0 +1,241 @@
+# Path-filtered contract regeneration.
+#
+# Fires only when a producer's committed OpenAPI document changes on main (or
+# manually). It re-runs Kiota for the changed document(s) and opens ONE pull
+# request on the always-reused branch `regen/openapi`.
+#
+# Deliberate choices:
+#   * the PR is opened with a fine-grained PAT (contents + pull-requests), not
+#     the default GITHUB_TOKEN, so that ci.yml actually runs on the PR — a PR
+#     created by GITHUB_TOKEN would not trigger further workflow runs, and the
+#     regen PR's CI run is the whole point (it is the break detector).
+#   * no automerge. A human reads the diff and merges.
+name: Contract regeneration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - catalog-api/openapi/v1.json
+      - orders-api/openapi/v1.json
+  workflow_dispatch:
+
+concurrency:
+  # A newer producer change supersedes an in-flight regen.
+  group: contract-regen
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  REGEN_BRANCH: regen/openapi
+
+jobs:
+  regenerate:
+    name: Regenerate Kiota clients
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current main
+        # Always the current tip of main, not the triggering commit: a regen PR
+        # built on a stale tree would re-open resolved drift.
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.REGEN_PAT }}
+
+      - name: Determine which producer documents changed
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          catalog=false
+          orders=false
+
+          if [ "$EVENT_NAME" != "push" ] \
+            || [ -z "${BEFORE_SHA:-}" ] \
+            || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            # Manual run (or no usable base): regenerate everything.
+            catalog=true
+            orders=true
+          else
+            changed_files="$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")"
+            echo "$changed_files"
+            if grep -qx 'catalog-api/openapi/v1.json' <<< "$changed_files"; then catalog=true; fi
+            if grep -qx 'orders-api/openapi/v1.json' <<< "$changed_files"; then orders=true; fi
+          fi
+
+          paths=""
+          if [ "$catalog" = true ]; then paths="catalog-api/openapi/v1.json"; fi
+          if [ "$orders" = true ]; then paths="${paths:+$paths }orders-api/openapi/v1.json"; fi
+
+          {
+            echo "catalog=$catalog"
+            echo "orders=$orders"
+            echo "paths=$paths"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "catalog=$catalog orders=$orders"
+
+      - name: Set up .NET
+        if: steps.changed.outputs.paths != ''
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install Kiota (pinned to the version in kiota-lock.json)
+        if: steps.changed.outputs.paths != ''
+        run: |
+          set -euo pipefail
+          version="$(jq -r '.kiotaVersion' storefront-api/Generated/Catalog/kiota-lock.json)"
+          echo "Installing Kiota $version"
+          dotnet tool install --global Microsoft.OpenApi.Kiota --version "$version"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Carry over an unmerged regeneration already on the regen branch
+        id: carryover
+        if: steps.changed.outputs.paths != ''
+        env:
+          GH_TOKEN: ${{ secrets.REGEN_PAT }}
+        # The branch is rebuilt from main every run, so without this a regen PR
+        # that is still open (e.g. Catalog) would be silently thrown away by the
+        # next run for the other producer (e.g. Orders) — leaving a Storefront
+        # client stale against a contract with no signal anywhere. Only carried
+        # over while a PR is actually open; once it merges, main already has it.
+        run: |
+          set -euo pipefail
+          open_pr="$(gh pr list --head "$REGEN_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$open_pr" ]; then
+            echo "No open regen pull request; starting from main."
+            echo "carried=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --no-tags origin "$REGEN_BRANCH"
+          # A human may have pushed a Storefront fix onto the regen PR after its
+          # CI run exposed a break. Force-pushing over that would destroy it, so
+          # stop and let a person untangle it instead.
+          foreign="$(git log --format='%an' "main..FETCH_HEAD" | grep -vx 'github-actions\[bot\]' || true)"
+          if [ -n "$foreign" ]; then
+            echo "::error::Branch $REGEN_BRANCH (PR #$open_pr) carries commits not made by this workflow; refusing to force-push over them. Merge or close the pull request first."
+            exit 1
+          fi
+
+          git checkout FETCH_HEAD -- storefront-api/Generated
+          echo "carried=true" >> "$GITHUB_OUTPUT"
+          echo "Carried over generated clients from $REGEN_BRANCH (PR #$open_pr)."
+
+      - name: Regenerate CatalogClient
+        if: steps.changed.outputs.catalog == 'true'
+        working-directory: storefront-api
+        # Run from storefront-api so the relative descriptionLocation recorded
+        # in kiota-lock.json stays byte-identical to the first generate (T4).
+        run: |
+          kiota generate -l CSharp -c CatalogClient -n Storefront.Generated.Catalog \
+            -d ../catalog-api/openapi/v1.json -o ./Generated/Catalog \
+            --exclude-backward-compatible --clean-output
+
+      - name: Regenerate OrdersClient
+        if: steps.changed.outputs.orders == 'true'
+        working-directory: storefront-api
+        run: |
+          kiota generate -l CSharp -c OrdersClient -n Storefront.Generated.Orders \
+            -d ../orders-api/openapi/v1.json -o ./Generated/Orders \
+            --exclude-backward-compatible --clean-output
+
+      - name: Detect generated diff
+        id: diff
+        if: steps.changed.outputs.paths != ''
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- storefront-api/Generated)" ]; then
+            echo "No change in generated clients; no pull request needed."
+            echo "dirty=false" >> "$GITHUB_OUTPUT"
+          else
+            git --no-pager status --short -- storefront-api/Generated
+            echo "dirty=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compose pull request body
+        if: steps.diff.outputs.dirty == 'true'
+        env:
+          TRIGGER_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGED_PATHS: ${{ steps.changed.outputs.paths }}
+          CATALOG_CHANGED: ${{ steps.changed.outputs.catalog }}
+          ORDERS_CHANGED: ${{ steps.changed.outputs.orders }}
+          CARRIED_OVER: ${{ steps.carryover.outputs.carried }}
+        run: |
+          set -euo pipefail
+          {
+            echo "Automated Kiota regeneration of the Storefront clients."
+            echo
+            echo "- Triggering sha: \`$TRIGGER_SHA\` (event: \`$EVENT_NAME\`)"
+            echo "- Changed contract paths:"
+            for p in $CHANGED_PATHS; do echo "  - \`$p\`"; done
+            echo "- Affected \`info.version\`:"
+            if [ "$CATALOG_CHANGED" = true ]; then
+              echo "  - catalog-api: \`$(jq -r '.info.version' catalog-api/openapi/v1.json)\`"
+            fi
+            if [ "$ORDERS_CHANGED" = true ]; then
+              echo "  - orders-api: \`$(jq -r '.info.version' orders-api/openapi/v1.json)\`"
+            fi
+            if [ "${CARRIED_OVER:-false}" = true ]; then
+              echo
+              echo "This branch also carries an earlier regeneration that had not been merged yet."
+            fi
+            echo
+            echo "CI on this pull request is the break detector: if a producer removed or"
+            echo "reshaped something the Storefront uses, the build fails here."
+            echo
+            echo "Merge by hand after reading the diff. No automerge."
+          } > /tmp/pr-body.md
+          cat /tmp/pr-body.md
+
+      - name: Push regen branch
+        if: steps.diff.outputs.dirty == 'true'
+        env:
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$REGEN_BRANCH"
+          git add -- storefront-api/Generated
+          git commit -m "Regenerate Kiota clients from ${TRIGGER_SHA:0:7}"
+          # Force: the branch is a disposable mirror of the latest regen, never
+          # a long-lived line of development.
+          git push --force origin "HEAD:refs/heads/$REGEN_BRANCH"
+
+      - name: Open or update the pull request
+        if: steps.diff.outputs.dirty == 'true'
+        env:
+          # Fine-grained PAT (contents + pull-requests). Using it rather than
+          # GITHUB_TOKEN is what lets ci.yml run on the resulting PR.
+          GH_TOKEN: ${{ secrets.REGEN_PAT }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --head "$REGEN_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" \
+              --title "Regenerate Kiota clients from changed OpenAPI contracts" \
+              --body-file /tmp/pr-body.md
+            echo "Updated PR #$existing"
+          else
+            # One PR, even when both producer documents changed in the same push.
+            gh pr create \
+              --base main \
+              --head "$REGEN_BRANCH" \
+              --title "Regenerate Kiota clients from changed OpenAPI contracts" \
+              --body-file /tmp/pr-body.md
+          fi
