@@ -3,6 +3,7 @@ specs/*
 plans/*
 notes/*
 .scratch/*
+.http
 
 # .NET build artifacts
 bin/
